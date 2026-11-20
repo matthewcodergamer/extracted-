@@ -136,9 +136,10 @@ mod tests{
  use super::*;use std::{fs,time::{SystemTime,UNIX_EPOCH}};
  fn temp_file(bytes:&[u8])->PathBuf{let id=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();let p=std::env::temp_dir().join(format!("extracted-test-{id}.bin"));fs::write(&p,bytes).unwrap();p}
  #[test]fn detects_zip_signature_with_bin_extension(){let p=temp_file(&[b'P',b'K',0x03,0x04,b'p']);assert_eq!(detect(&p).unwrap(),Format::Zip);fs::remove_file(p).unwrap();}
- #[test]fn detects_seven_zip_without_claiming_support(){let p=temp_file(&[b'7',b'z',0xbc,0xaf,0x27,0x1c,b'p']);assert_eq!(detect(&p).unwrap(),Format::SevenZip);assert!(Format::SevenZip.supported());fs::remove_file(p).unwrap();}
+ #[test]fn detects_seven_zip_as_supported(){let p=temp_file(&[b'7',b'z',0xbc,0xaf,0x27,0x1c,b'p']);assert_eq!(detect(&p).unwrap(),Format::SevenZip);assert!(Format::SevenZip.supported());fs::remove_file(p).unwrap();}
  #[test]fn rejects_parent_traversal(){assert!(safe_relative(Path::new("../outside.txt")).is_err());assert!(safe_relative(Path::new("folder/ok.txt")).is_ok());}
  #[test]fn unknown_binary_is_not_supported(){let p=temp_file(b"arbitrary game data");assert_eq!(detect(&p).unwrap(),Format::Unknown);fs::remove_file(p).unwrap();}
+ #[test]fn detects_rdr2_rpf8_without_claiming_extraction_support(){let p=temp_file(b"RPF8 archive header");assert_eq!(detect(&p).unwrap(),Format::Rpf8);assert!(!Format::Rpf8.supported());fs::remove_file(p).unwrap();}
  #[test]fn extracts_a_zip_archive_named_bin(){
   let id=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();let root=std::env::temp_dir().join(format!("extracted-zip-test-{id}"));fs::create_dir_all(&root).unwrap();
   let archive_path=root.join("payload.bin");let file=File::create(&archive_path).unwrap();let mut writer=zip::ZipWriter::new(file);
