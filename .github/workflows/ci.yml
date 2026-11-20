@@ -14,18 +14,6 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run build
-  rust:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm install
-      - run: npm run icons
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
   macos-build:
     runs-on: macos-latest
     steps:
@@ -36,6 +24,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: npm install
       - run: npm run icons
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: npx tauri build --bundles app,dmg
       - uses: actions/upload-artifact@v4
         if: success()
