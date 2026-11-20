@@ -98,14 +98,20 @@ fn extract_archive_inner(path:String,destination:String)->Result<ExtractionResul
    Ok(ExtractionResult{files_written,bytes_written,destination})
   },
   Format::SevenZip=>{
+   let file=File::open(&source).map_err(|e|e.to_string())?;
+   let mut reader=sevenz_rust2::ArchiveReader::new_with_memory_limit(file,sevenz_rust2::Password::empty(),256*1024)
+    .map_err(|e|format!("Cannot read 7-Zip archive: {e}"))?;
    let(mut files_written,mut bytes_written)=(0u64,0u64);
-   sevenz_rust2::decompress_file_with_extract_fn(&source,&dest,|entry,reader,out|{
-    if entry.is_anti_item(){return Ok(false)}
-    if entry.is_directory(){fs::create_dir_all(out)?;return Ok(true)}
+   reader.for_each_entries(|entry,stream|{
+    if entry.is_anti_item(){return Ok(true)}
+    let normalized=entry.name().replace('\\',"/");
+    let relative=safe_relative(Path::new(&normalized)).map_err(sevenz_rust2::Error::other)?;
+    let out=dest.join(relative);
+    if entry.is_directory(){fs::create_dir_all(&out)?;return Ok(true)}
     if !entry.has_stream(){return Ok(true)}
     if let Some(parent)=out.parent(){fs::create_dir_all(parent)?}
-    let mut target=fs::OpenOptions::new().write(true).create_new(true).open(out)?;
-    bytes_written+=io::copy(reader,&mut target)?;target.sync_all()?;files_written+=1;Ok(true)
+    let mut target=fs::OpenOptions::new().write(true).create_new(true).open(&out)?;
+    bytes_written+=io::copy(stream,&mut target)?;target.sync_all()?;files_written+=1;Ok(true)
    }).map_err(|e|format!("7-Zip extraction failed: {e}"))?;
    Ok(ExtractionResult{files_written,bytes_written,destination})
   },
