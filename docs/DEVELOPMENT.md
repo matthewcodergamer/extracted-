@@ -17,6 +17,10 @@
 
 Artifacts are written under src-tauri/target/release/bundle/.
 
+## Product focus: BIN and archive extraction
+
+The main user workflow is selecting a file whose name may end in `.bin`, inspecting its actual signature, choosing an output directory, and extracting it if the payload matches a supported format. Never infer a parser from `.bin` alone. Unknown signatures are intentionally rejected instead of being unpacked as arbitrary bytes. The extraction engine should remain streaming/file-backed for large inputs; avoid reading an entire archive into a `Vec<u8>`.
+
 ## Current format support
 
 | Format signature | Inspect | Extract |
@@ -43,5 +47,12 @@ The .bin extension does not identify a payload format. The app uses file signatu
 - This first version does not yet show byte-level progress or support mid-extraction cancellation.
 - Disk-space preflight and a full extraction rollback are not yet implemented.
 
-## Red Dead Redemption 2
-RPF8 signatures are recognized for inspection, but RPF extraction is not implemented. RPF is a distinct archive format and is not equivalent to .bin. The public rpf-archive Rust library advertises RPF8 read support, but its parse/extract API accepts the full archive as a byte slice, which is not suitable for our large-file goal without a file-backed streaming adapter. Its current parser marks encrypted RPF8 TOCs as TFIT-encrypted and reports that RDR2 keys are not supported. Extracted therefore only identifies RPF8 and does not try to decrypt or bypass it. No DRM, encryption, or access-control bypass is included.
+## Red Dead Redemption 2 (secondary module)
+RPF8 signatures are recognized for inspection, but RPF extraction is not implemented. RPF is a distinct archive format and is not equivalent to .bin. Keep RDR2 support optional and isolated from the core BIN/archive extraction path. The public rpf-archive Rust library advertises RPF8 read support, but its parse/extract API accepts the full archive as a byte slice, which is not suitable for our large-file goal without a file-backed streaming adapter. Its current parser marks encrypted RPF8 TOCs as TFIT-encrypted and reports that RDR2 keys are not supported. Extracted therefore only identifies RPF8 and does not try to decrypt or bypass it. No DRM, encryption, or access-control bypass is included.
+
+## Test expectations
+- Include small synthetic fixtures for each supported signature and extraction path.
+- Include at least one ZIP and one 7-Zip fixture whose filename ends in `.bin`.
+- Test large archives using generated data in CI; do not commit copyrighted game archives or huge test binaries to the repository.
+- Verify extracted paths remain within the chosen destination and existing files are never overwritten.
+- Treat an unknown `.bin` as unsupported, not as a failed generic extraction.
