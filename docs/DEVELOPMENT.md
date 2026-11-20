@@ -26,7 +26,8 @@ Artifacts are written under src-tauri/target/release/bundle/.
 | GZIP | Yes | Yes, as one decompressed file |
 | BZIP2 | Yes | Yes, as one decompressed file |
 | XZ | Yes | Yes, as one decompressed file |
-| 7-Zip | Yes | Not yet |
+| 7-Zip | Yes | Yes (unencrypted archives) |
+| RPF8 (RDR2) | Yes | Not yet |
 | RAR | Yes | Not yet |
 | ISO 9660 | Yes | Not yet |
 | Unknown or proprietary BIN | Unknown classification | No |
@@ -42,4 +43,4 @@ The .bin extension does not identify a payload format. The app uses file signatu
 - Disk-space preflight and a full extraction rollback are not yet implemented.
 
 ## Red Dead Redemption 2
-RDR2 compatibility is not implemented in this bootstrap. RPF is a distinct archive format and is not equivalent to .bin. RPF support requires a separately validated parser and lawful sample fixtures. No DRM, encryption, or access-control bypass is included.
+RPF8 signatures are recognized for inspection, but RPF extraction is not implemented. RPF is a distinct archive format and is not equivalent to .bin. A current Rust library advertises read support for RPF8, but the integration and its key/encryption requirements still need validation against lawful sample fixtures. No DRM, encryption, or access-control bypass is included.
