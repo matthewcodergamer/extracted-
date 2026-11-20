@@ -46,7 +46,7 @@ fn safe_relative(path:&Path)->Result<PathBuf,String>{
  for component in path.components(){match component{Component::Normal(part)=>clean.push(part),Component::CurDir=>{},_=>return Err(format!("Unsafe archive path rejected: {}",path.display()))}}
  if clean.as_os_str().is_empty(){return Err("Archive entry has an empty path.".into())} Ok(clean)
 }
-fn copy_stream<R:Read,W:Write>(reader:R,writer:W)->io::Result<u64>{io::copy(reader,writer)}
+fn copy_stream<R:Read,W:Write>(mut reader:R,writer:&mut W)->io::Result<u64>{io::copy(&mut reader,writer)}
 fn single_stream<R:Read>(reader:R,source:&Path,destination:&Path)->Result<ExtractionResult,String>{
  fs::create_dir_all(destination).map_err(|e|format!("Cannot create destination: {e}"))?;
  let original=source.file_name().and_then(|n|n.to_str()).unwrap_or("archive.bin").to_ascii_lowercase();
@@ -103,7 +103,7 @@ fn extract_archive_inner(path:String,destination:String)->Result<ExtractionResul
 }
 #[tauri::command]
 async fn extract_archive(path:String,destination:String)->Result<ExtractionResult,String>{
- tauri::async_runtime::spawn_blocking(move || extract_archive_inner(path,destination)).await.map_err(|e|format!("Extraction task failed: {e}"))?
+ Ok(tauri::async_runtime::spawn_blocking(move || extract_archive_inner(path,destination)).await.map_err(|e|format!("Extraction task failed: {e}"))?)
 }
 pub fn run(){
  tauri::Builder::default().plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_opener::init())
