@@ -9,16 +9,17 @@ struct Inspection { file_name:String, path:String, size:u64, format:String, supp
 #[derive(Debug, Serialize)]
 struct ExtractionResult { files_written:u64, bytes_written:u64, destination:String }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Format { Zip, Tar, Gzip, Bzip2, Xz, SevenZip, Rar, Iso, Unknown }
+enum Format { Zip, Tar, Gzip, Bzip2, Xz, SevenZip, Rar, Iso, Rpf8, Unknown }
 impl Format {
- fn label(self)->&'static str { match self { Self::Zip=>"ZIP",Self::Tar=>"TAR",Self::Gzip=>"GZIP",Self::Bzip2=>"BZIP2",Self::Xz=>"XZ",Self::SevenZip=>"7-Zip",Self::Rar=>"RAR",Self::Iso=>"ISO 9660",Self::Unknown=>"Unknown binary" } }
- fn supported(self)->bool { matches!(self,Self::Zip|Self::Tar|Self::Gzip|Self::Bzip2|Self::Xz) }
+ fn label(self)->&'static str { match self { Self::Zip=>"ZIP",Self::Tar=>"TAR",Self::Gzip=>"GZIP",Self::Bzip2=>"BZIP2",Self::Xz=>"XZ",Self::SevenZip=>"7-Zip",Self::Rar=>"RAR",Self::Iso=>"ISO 9660",Self::Rpf8=>"RPF8 (RDR2)",Self::Unknown=>"Unknown binary" } }
+ fn supported(self)->bool { matches!(self,Self::Zip|Self::Tar|Self::Gzip|Self::Bzip2|Self::Xz|Self::SevenZip) }
 }
 fn detect(path:&Path)->Result<Format,String>{
  let mut file=File::open(path).map_err(|e|format!("Cannot open file: {e}"))?;
  let mut header=[0u8;32774]; let n=file.read(&mut header).map_err(|e|format!("Cannot read file: {e}"))?; let h=&header[..n];
  if h.starts_with(&[b'P',b'K',0x03,0x04])||h.starts_with(&[b'P',b'K',0x05,0x06])||h.starts_with(&[b'P',b'K',0x07,0x08]){return Ok(Format::Zip)}
  if h.starts_with(&[b'7',b'z',0xbc,0xaf,0x27,0x1c]){return Ok(Format::SevenZip)}
+ if h.starts_with(b"RPF8"){return Ok(Format::Rpf8)}
  if h.starts_with(&[b'R',b'a',b'r',b'!',0x1a,0x07,0x00])||h.starts_with(&[b'R',b'a',b'r',b'!',0x1a,0x07,0x01,0x00]){return Ok(Format::Rar)}
  if h.starts_with(&[0x1f,0x8b]){return Ok(Format::Gzip)}
  if h.starts_with(b"BZh"){return Ok(Format::Bzip2)}
@@ -34,7 +35,8 @@ fn inspect_file(path:String)->Result<Inspection,String>{
  let format=detect(&p)?; let name=p.file_name().and_then(|n|n.to_str()).unwrap_or("Unknown file").to_string();
  let description=match format {
   Format::Unknown=>"No supported archive signature found. This may be proprietary game data or a raw binary file.".to_string(),
-  Format::SevenZip=>"7-Zip signature detected. Extraction support is not enabled in this build yet.".to_string(),
+  Format::SevenZip=>"7-Zip archive detected. Native extraction is available.".to_string(),
+  Format::Rpf8=>"Red Dead Redemption 2 RPF8 archive detected. RPF8 extraction is not enabled in this build yet.".to_string(),
   Format::Rar=>"RAR signature detected. Extraction support is not enabled in this build yet.".to_string(),
   Format::Iso=>"ISO 9660 image detected. ISO browsing and extraction are not enabled yet.".to_string(),
   _=>format!("{} signature detected. This format can be extracted.",format.label())
@@ -95,9 +97,22 @@ fn extract_archive_inner(path:String,destination:String)->Result<ExtractionResul
    }
    Ok(ExtractionResult{files_written,bytes_written,destination})
   },
+  Format::SevenZip=>{
+   let(mut files_written,mut bytes_written)=(0u64,0u64);
+   sevenz_rust2::decompress_file_with_extract_fn(&source,&dest,|entry,reader,out|{
+    if entry.is_anti_item(){return Ok(false)}
+    if entry.is_directory(){fs::create_dir_all(out)?;return Ok(true)}
+    if !entry.has_stream(){return Ok(true)}
+    if let Some(parent)=out.parent(){fs::create_dir_all(parent)?}
+    let mut target=fs::OpenOptions::new().write(true).create_new(true).open(out)?;
+    bytes_written+=io::copy(reader,&mut target)?;target.sync_all()?;files_written+=1;Ok(true)
+   }).map_err(|e|format!("7-Zip extraction failed: {e}"))?;
+   Ok(ExtractionResult{files_written,bytes_written,destination})
+  },
   Format::Gzip=>single_stream(GzDecoder::new(File::open(&source).map_err(|e|e.to_string())?),&source,&dest),
   Format::Bzip2=>single_stream(BzDecoder::new(File::open(&source).map_err(|e|e.to_string())?),&source,&dest),
   Format::Xz=>single_stream(XzDecoder::new(File::open(&source).map_err(|e|e.to_string())?),&source,&dest),
+  Format::Rpf8=>Err("RPF8 (RDR2) parsing is not implemented yet.".into()),
   _=>Err("Unsupported format.".into())
  }
 }
@@ -115,7 +130,7 @@ mod tests{
  use super::*;use std::{fs,time::{SystemTime,UNIX_EPOCH}};
  fn temp_file(bytes:&[u8])->PathBuf{let id=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();let p=std::env::temp_dir().join(format!("extracted-test-{id}.bin"));fs::write(&p,bytes).unwrap();p}
  #[test]fn detects_zip_signature_with_bin_extension(){let p=temp_file(&[b'P',b'K',0x03,0x04,b'p']);assert_eq!(detect(&p).unwrap(),Format::Zip);fs::remove_file(p).unwrap();}
- #[test]fn detects_seven_zip_without_claiming_support(){let p=temp_file(&[b'7',b'z',0xbc,0xaf,0x27,0x1c,b'p']);assert_eq!(detect(&p).unwrap(),Format::SevenZip);assert!(!Format::SevenZip.supported());fs::remove_file(p).unwrap();}
+ #[test]fn detects_seven_zip_without_claiming_support(){let p=temp_file(&[b'7',b'z',0xbc,0xaf,0x27,0x1c,b'p']);assert_eq!(detect(&p).unwrap(),Format::SevenZip);assert!(Format::SevenZip.supported());fs::remove_file(p).unwrap();}
  #[test]fn rejects_parent_traversal(){assert!(safe_relative(Path::new("../outside.txt")).is_err());assert!(safe_relative(Path::new("folder/ok.txt")).is_ok());}
  #[test]fn unknown_binary_is_not_supported(){let p=temp_file(b"arbitrary game data");assert_eq!(detect(&p).unwrap(),Format::Unknown);fs::remove_file(p).unwrap();}
  #[test]fn extracts_a_zip_archive_named_bin(){
