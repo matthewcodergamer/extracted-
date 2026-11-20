@@ -1,4 +1,5 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -10,6 +11,7 @@ const prettySize=(bytes:number)=>{if(bytes<1024)return bytes+" B";const units=["
 export default function App(){
  const [file,setFile]=useState<Inspection|null>(null),[destination,setDestination]=useState(""),[status,setStatus]=useState<Status>("idle"),[message,setMessage]=useState("Choose an archive to inspect its contents."),[result,setResult]=useState<ExtractionResult|null>(null),[error,setError]=useState("");
  const inspect=useCallback(async(path:string)=>{setStatus("inspecting");setError("");setResult(null);setMessage("Inspecting file signature…");try{const info=await invoke<Inspection>("inspect_file",{path});setFile(info);setDestination(path.replace(/[/\\][^/\\]+$/,""));setStatus(info.supported?"ready":"error");setMessage(info.description);if(!info.supported)setError("This format is not supported for extraction yet.");}catch(e){setStatus("error");setError(String(e));setMessage("Could not inspect this file.");}},[]);
+ useEffect(()=>{let unlisten:(()=>void)|undefined;let disposed=false;getCurrentWindow().onDragDropEvent(event=>{if(event.payload.type==="drop"&&event.payload.paths.length>0){void inspect(event.payload.paths[0]);}}).then(fn=>{if(disposed)fn();else unlisten=fn;}).catch(()=>{});return()=>{disposed=true;unlisten?.();};},[inspect]);
  const chooseFile=async()=>{const selected=await open({multiple:false,directory:false,title:"Choose an archive"});if(typeof selected==="string")await inspect(selected);};
  const chooseDestination=async()=>{const selected=await open({multiple:false,directory:true,title:"Choose extraction folder"});if(typeof selected==="string")setDestination(selected);};
  const extract=async()=>{if(!file||!destination||!file.supported)return;setStatus("extracting");setError("");setResult(null);setMessage("Extracting safely…");try{const done=await invoke<ExtractionResult>("extract_archive",{path:file.path,destination});setResult(done);setStatus("done");setMessage("Finished — "+done.files_written+" file(s) extracted.");}catch(e){setStatus("error");setError(String(e));setMessage("Extraction failed.");}};
