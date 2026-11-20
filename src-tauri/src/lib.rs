@@ -57,8 +57,7 @@ fn single_stream<R:Read>(reader:R,source:&Path,destination:&Path)->Result<Extrac
  output.sync_all().map_err(|e|format!("Could not flush output: {e}"))?;
  Ok(ExtractionResult{files_written:1,bytes_written:bytes,destination:destination.to_string_lossy().into_owned()})
 }
-#[tauri::command]
-fn extract_archive(path:String,destination:String)->Result<ExtractionResult,String>{
+fn extract_archive_inner(path:String,destination:String)->Result<ExtractionResult,String>{
  let source=PathBuf::from(&path); let dest=PathBuf::from(&destination);
  if !source.is_file(){return Err("Source file does not exist.".into())}
  if !dest.is_dir(){return Err("Choose an existing destination folder.".into())}
@@ -102,6 +101,10 @@ fn extract_archive(path:String,destination:String)->Result<ExtractionResult,Stri
   _=>Err("Unsupported format.".into())
  }
 }
+#[tauri::command]
+async fn extract_archive(path:String,destination:String)->Result<ExtractionResult,String>{
+ tauri::async_runtime::spawn_blocking(move || extract_archive_inner(path,destination)).await.map_err(|e|format!("Extraction task failed: {e}"))?
+}
 pub fn run(){
  tauri::Builder::default().plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_opener::init())
  .invoke_handler(tauri::generate_handler![inspect_file,extract_archive])
@@ -115,4 +118,11 @@ mod tests{
  #[test]fn detects_seven_zip_without_claiming_support(){let p=temp_file(&[b'7',b'z',0xbc,0xaf,0x27,0x1c,b'p']);assert_eq!(detect(&p).unwrap(),Format::SevenZip);assert!(!Format::SevenZip.supported());fs::remove_file(p).unwrap();}
  #[test]fn rejects_parent_traversal(){assert!(safe_relative(Path::new("../outside.txt")).is_err());assert!(safe_relative(Path::new("folder/ok.txt")).is_ok());}
  #[test]fn unknown_binary_is_not_supported(){let p=temp_file(b"arbitrary game data");assert_eq!(detect(&p).unwrap(),Format::Unknown);fs::remove_file(p).unwrap();}
+ #[test]fn extracts_a_zip_archive_named_bin(){
+  let id=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();let root=std::env::temp_dir().join(format!("extracted-zip-test-{id}"));fs::create_dir_all(&root).unwrap();
+  let archive_path=root.join("payload.bin");let file=File::create(&archive_path).unwrap();let mut writer=zip::ZipWriter::new(file);
+  writer.start_file("hello.txt",zip::write::SimpleFileOptions::default()).unwrap();writer.write_all(b"hello extracted").unwrap();writer.finish().unwrap();
+  let dest=root.join("out");fs::create_dir_all(&dest).unwrap();let result=extract_archive_inner(archive_path.to_string_lossy().into_owned(),dest.to_string_lossy().into_owned()).unwrap();
+  assert_eq!(result.files_written,1);assert_eq!(fs::read(dest.join("hello.txt")).unwrap(),b"hello extracted");let _=fs::remove_dir_all(root);
+ }
 }
