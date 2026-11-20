@@ -6,7 +6,7 @@ A native macOS-first desktop utility for inspecting and extracting supported arc
 
 ## Status
 
-Initial project bootstrap in progress. The first implementation targets ZIP, TAR, GZIP, BZIP2, and XZ. 7z, RAR, ISO, and RDR2 RPF support are tracked as separate compatibility work and are not claimed until implemented and tested.
+Initial project bootstrap in progress. The first implementation targets ZIP, 7z, TAR, GZIP, BZIP2, and XZ. RAR and ISO extraction are not enabled. RDR2 RPF8 is recognized for inspection but is not yet extracted.
 
 ## Development
 
