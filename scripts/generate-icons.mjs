@@ -1,0 +1,1 @@
+import sharp from "sharp"; import { mkdir } from "node:fs/promises"; await mkdir("src-tauri/icons",{recursive:true}); await sharp("public/icon.svg").resize(1024,1024).png().toFile("src-tauri/icons/icon.png"); console.log("Generated app icon.");

@@ -1,0 +1,40 @@
+name: CI
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report runner resources
+        run: free -h
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run build
+  macos-build:
+    # Intel macOS hosted runner has 14 GB RAM; ubuntu-latest above has 16 GB.
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report runner resources
+        run: system_profiler SPHardwareDataType | grep -E 'Chip|Processor|Memory'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm install
+      - run: npm run icons
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: npx tauri build --bundles app,dmg
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: Extracted-macOS
+          path: src-tauri/target/release/bundle/**
+          if-no-files-found: error

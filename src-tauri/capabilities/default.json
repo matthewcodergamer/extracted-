@@ -1,0 +1,1 @@
+{"$schema":"../gen/schemas/desktop-schema.json","identifier":"default","description":"Default permissions for the Extracted desktop window","windows":["main"],"permissions":["core:default","dialog:default","opener:default"]}

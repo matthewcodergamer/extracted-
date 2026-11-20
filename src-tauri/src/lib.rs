@@ -1,0 +1,161 @@
+use bzip2::read::BzDecoder;
+use flate2::read::GzDecoder;
+use serde::Serialize;
+use std::{fs::{self, File}, io::{self, Read, Write}, path::{Component, Path, PathBuf}};
+use xz2::read::XzDecoder;
+
+#[derive(Debug, Serialize)]
+struct Inspection { file_name:String, path:String, size:u64, format:String, supported:bool, description:String }
+#[derive(Debug, Serialize)]
+struct ExtractionResult { files_written:u64, bytes_written:u64, destination:String }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Format { Zip, Tar, Gzip, Bzip2, Xz, SevenZip, Rar, Iso, Rpf8, Unknown }
+impl Format {
+ fn label(self)->&'static str { match self { Self::Zip=>"ZIP",Self::Tar=>"TAR",Self::Gzip=>"GZIP",Self::Bzip2=>"BZIP2",Self::Xz=>"XZ",Self::SevenZip=>"7-Zip",Self::Rar=>"RAR",Self::Iso=>"ISO 9660",Self::Rpf8=>"RPF8 (RDR2)",Self::Unknown=>"Unknown binary" } }
+ fn supported(self)->bool { matches!(self,Self::Zip|Self::Tar|Self::Gzip|Self::Bzip2|Self::Xz|Self::SevenZip) }
+}
+fn detect(path:&Path)->Result<Format,String>{
+ let mut file=File::open(path).map_err(|e|format!("Cannot open file: {e}"))?;
+ let mut header=[0u8;32774]; let n=file.read(&mut header).map_err(|e|format!("Cannot read file: {e}"))?; let h=&header[..n];
+ if h.starts_with(&[b'P',b'K',0x03,0x04])||h.starts_with(&[b'P',b'K',0x05,0x06])||h.starts_with(&[b'P',b'K',0x07,0x08]){return Ok(Format::Zip)}
+ if h.starts_with(b"8FPR")||h.starts_with(b"RPF8"){return Ok(Format::Rpf8)}
+ if h.starts_with(&[b'7',b'z',0xbc,0xaf,0x27,0x1c]){return Ok(Format::SevenZip)}
+ if h.starts_with(&[b'R',b'a',b'r',b'!',0x1a,0x07,0x00])||h.starts_with(&[b'R',b'a',b'r',b'!',0x1a,0x07,0x01,0x00]){return Ok(Format::Rar)}
+ if h.starts_with(&[0x1f,0x8b]){return Ok(Format::Gzip)}
+ if h.starts_with(b"BZh"){return Ok(Format::Bzip2)}
+ if h.starts_with(&[0xfd,b'7',b'z',b'X',b'Z',0x00]){return Ok(Format::Xz)}
+ if n>=262 && &h[257..262]==b"ustar"{return Ok(Format::Tar)}
+ if n>=32774 && &h[32769..32774]==b"CD001"{return Ok(Format::Iso)}
+ Ok(Format::Unknown)
+}
+#[tauri::command]
+fn inspect_file(path:String)->Result<Inspection,String>{
+ let p=PathBuf::from(&path); let metadata=fs::metadata(&p).map_err(|e|format!("Cannot read file metadata: {e}"))?;
+ if !metadata.is_file(){return Err("The selected path is not a regular file.".into())}
+ let format=detect(&p)?; let name=p.file_name().and_then(|n|n.to_str()).unwrap_or("Unknown file").to_string();
+ let description=match format {
+  Format::Unknown=>"No supported archive signature found. This may be proprietary game data or a raw binary file.".to_string(),
+  Format::SevenZip=>"7-Zip archive detected. Native extraction is available.".to_string(),
+  Format::Rpf8=>"Red Dead Redemption 2 RPF8 archive detected. RPF8 extraction is not enabled in this build yet.".to_string(),
+  Format::Rar=>"RAR signature detected. Extraction support is not enabled in this build yet.".to_string(),
+  Format::Iso=>"ISO 9660 image detected. ISO browsing and extraction are not enabled yet.".to_string(),
+  _=>format!("{} signature detected. This format can be extracted.",format.label())
+ };
+ Ok(Inspection{file_name:name,path,size:metadata.len(),format:format.label().into(),supported:format.supported(),description})
+}
+fn safe_relative(path:&Path)->Result<PathBuf,String>{
+ let mut clean=PathBuf::new();
+ for component in path.components(){match component{Component::Normal(part)=>clean.push(part),Component::CurDir=>{},_=>return Err(format!("Unsafe archive path rejected: {}",path.display()))}}
+ if clean.as_os_str().is_empty(){return Err("Archive entry has an empty path.".into())} Ok(clean)
+}
+fn copy_stream<R:Read,W:Write>(mut reader:R,writer:&mut W)->io::Result<u64>{io::copy(&mut reader,writer)}
+fn single_stream<R:Read>(reader:R,source:&Path,destination:&Path)->Result<ExtractionResult,String>{
+ fs::create_dir_all(destination).map_err(|e|format!("Cannot create destination: {e}"))?;
+ let original=source.file_name().and_then(|n|n.to_str()).unwrap_or("archive.bin").to_ascii_lowercase();
+ let output_name=[".gz",".gzip",".bz2",".xz",".bin"].iter().find_map(|ext|original.strip_suffix(ext)).filter(|s|!s.is_empty()).unwrap_or("extracted-data");
+ let output_path=destination.join(output_name);
+ let mut output=fs::OpenOptions::new().write(true).create_new(true).open(&output_path).map_err(|e|format!("Cannot create output file (it may already exist): {e}"))?;
+ let bytes=copy_stream(reader,&mut output).map_err(|e|format!("Decompression failed: {e}"))?;
+ output.sync_all().map_err(|e|format!("Could not flush output: {e}"))?;
+ Ok(ExtractionResult{files_written:1,bytes_written:bytes,destination:destination.to_string_lossy().into_owned()})
+}
+fn extract_archive_inner(path:String,destination:String)->Result<ExtractionResult,String>{
+ let source=PathBuf::from(&path); let dest=PathBuf::from(&destination);
+ if !source.is_file(){return Err("Source file does not exist.".into())}
+ if !dest.is_dir(){return Err("Choose an existing destination folder.".into())}
+ let format=detect(&source)?; if !format.supported(){return Err(format!("{} extraction is not supported yet.",format.label()))}
+ match format {
+  Format::Zip=>{
+   let file=File::open(&source).map_err(|e|e.to_string())?;
+   let mut archive=zip::ZipArchive::new(file).map_err(|e|format!("Invalid ZIP archive: {e}"))?;
+   let(mut files_written,mut bytes_written)=(0u64,0u64);
+   for i in 0..archive.len(){
+    let mut entry=archive.by_index(i).map_err(|e|format!("Cannot read ZIP entry: {e}"))?;
+    let Some(relative)=entry.enclosed_name() else{return Err(format!("Unsafe ZIP entry path rejected: {}",entry.name()))};
+    let out=dest.join(relative);
+    if entry.is_dir(){fs::create_dir_all(&out).map_err(|e|e.to_string())?;continue}
+    if let Some(parent)=out.parent(){fs::create_dir_all(parent).map_err(|e|e.to_string())?}
+    let mut target=fs::OpenOptions::new().write(true).create_new(true).open(&out).map_err(|e|format!("Cannot create output file (it may already exist): {e}"))?;
+    bytes_written+=io::copy(&mut entry,&mut target).map_err(|e|format!("ZIP extraction failed: {e}"))?;
+    target.sync_all().map_err(|e|e.to_string())?;files_written+=1;
+   }
+   Ok(ExtractionResult{files_written,bytes_written,destination})
+  },
+  Format::Tar=>{
+   let file=File::open(&source).map_err(|e|e.to_string())?;let mut archive=tar::Archive::new(file);
+   let entries=archive.entries().map_err(|e|format!("Invalid TAR archive: {e}"))?;
+   let(mut files_written,mut bytes_written)=(0u64,0u64);
+   for item in entries{
+    let mut entry=item.map_err(|e|format!("Cannot read TAR entry: {e}"))?;
+    let raw=entry.path().map_err(|e|e.to_string())?.into_owned();let relative=safe_relative(&raw)?;let out=dest.join(relative);
+    if entry.header().entry_type().is_dir(){fs::create_dir_all(&out).map_err(|e|e.to_string())?;continue}
+    if !entry.header().entry_type().is_file(){continue}
+    if let Some(parent)=out.parent(){fs::create_dir_all(parent).map_err(|e|e.to_string())?}
+    let mut target=fs::OpenOptions::new().write(true).create_new(true).open(&out).map_err(|e|format!("Cannot create output file (it may already exist): {e}"))?;
+    bytes_written+=io::copy(&mut entry,&mut target).map_err(|e|format!("TAR extraction failed: {e}"))?;
+    target.sync_all().map_err(|e|e.to_string())?;files_written+=1;
+   }
+   Ok(ExtractionResult{files_written,bytes_written,destination})
+  },
+  Format::SevenZip=>{
+   let file=File::open(&source).map_err(|e|e.to_string())?;
+   let mut reader=sevenz_rust2::ArchiveReader::new_with_memory_limit(file,sevenz_rust2::Password::empty(),256*1024)
+    .map_err(|e|format!("Cannot read 7-Zip archive: {e}"))?;
+   let(mut files_written,mut bytes_written)=(0u64,0u64);
+   reader.for_each_entries(|entry,stream|{
+    if entry.is_anti_item(){return Ok(true)}
+    let normalized=entry.name().replace('\\',"/");
+    let relative=safe_relative(Path::new(&normalized)).map_err(|message|sevenz_rust2::Error::Other(std::borrow::Cow::Owned(message)))?;
+    let out=dest.join(relative);
+    if entry.is_directory(){fs::create_dir_all(&out)?;return Ok(true)}
+    if !entry.has_stream(){return Ok(true)}
+    if let Some(parent)=out.parent(){fs::create_dir_all(parent)?}
+    let mut target=fs::OpenOptions::new().write(true).create_new(true).open(&out)?;
+    bytes_written+=io::copy(stream,&mut target)?;target.sync_all()?;files_written+=1;Ok(true)
+   }).map_err(|e|format!("7-Zip extraction failed: {e}"))?;
+   Ok(ExtractionResult{files_written,bytes_written,destination})
+  },
+  Format::Gzip=>single_stream(GzDecoder::new(File::open(&source).map_err(|e|e.to_string())?),&source,&dest),
+  Format::Bzip2=>single_stream(BzDecoder::new(File::open(&source).map_err(|e|e.to_string())?),&source,&dest),
+  Format::Xz=>single_stream(XzDecoder::new(File::open(&source).map_err(|e|e.to_string())?),&source,&dest),
+  Format::Rpf8=>Err("RPF8 (RDR2) parsing is not implemented yet.".into()),
+  _=>Err("Unsupported format.".into())
+ }
+}
+#[tauri::command]
+async fn extract_archive(path:String,destination:String)->Result<ExtractionResult,String>{
+ tauri::async_runtime::spawn_blocking(move || extract_archive_inner(path,destination)).await.map_err(|e|format!("Extraction task failed: {e}"))?
+}
+pub fn run(){
+ tauri::Builder::default().plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_opener::init())
+ .invoke_handler(tauri::generate_handler![inspect_file,extract_archive])
+ .run(tauri::generate_context!()).expect("error while running Extracted");
+}
+#[cfg(test)]
+mod tests{
+ use super::*;use std::{fs,time::{SystemTime,UNIX_EPOCH}};
+ fn temp_file(bytes:&[u8])->PathBuf{let id=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();let p=std::env::temp_dir().join(format!("extracted-test-{id}.bin"));fs::write(&p,bytes).unwrap();p}
+ #[test]fn extracts_gzip_payload_from_bin_file(){
+  use flate2::{write::GzEncoder,Compression};
+  let id=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+  let root=std::env::temp_dir().join(format!("extracted-gzip-bin-test-{id}"));fs::create_dir_all(&root).unwrap();
+  let mut encoder=GzEncoder::new(Vec::new(),Compression::default());encoder.write_all(b"large binary payload streamed").unwrap();let compressed=encoder.finish().unwrap();
+  let archive_path=root.join("payload.bin");fs::write(&archive_path,compressed).unwrap();
+  let dest=root.join("out");fs::create_dir_all(&dest).unwrap();
+  let result=extract_archive_inner(archive_path.to_string_lossy().into_owned(),dest.to_string_lossy().into_owned()).unwrap();
+  assert_eq!(result.files_written,1);assert_eq!(fs::read(dest.join("payload")).unwrap(),b"large binary payload streamed");
+  let _=fs::remove_dir_all(root);
+ }
+ #[test]fn detects_zip_signature_with_bin_extension(){let p=temp_file(&[b'P',b'K',0x03,0x04,b'p']);assert_eq!(detect(&p).unwrap(),Format::Zip);fs::remove_file(p).unwrap();}
+ #[test]fn detects_seven_zip_as_supported(){let p=temp_file(&[b'7',b'z',0xbc,0xaf,0x27,0x1c,b'p']);assert_eq!(detect(&p).unwrap(),Format::SevenZip);assert!(Format::SevenZip.supported());fs::remove_file(p).unwrap();}
+ #[test]fn rejects_parent_traversal(){assert!(safe_relative(Path::new("../outside.txt")).is_err());assert!(safe_relative(Path::new("folder/ok.txt")).is_ok());}
+ #[test]fn unknown_binary_is_not_supported(){let p=temp_file(b"arbitrary game data");assert_eq!(detect(&p).unwrap(),Format::Unknown);fs::remove_file(p).unwrap();}
+ #[test]fn detects_rdr2_rpf8_little_endian_magic_without_claiming_extraction_support(){let p=temp_file(b"8FPR archive header");assert_eq!(detect(&p).unwrap(),Format::Rpf8);assert!(!Format::Rpf8.supported());fs::remove_file(p).unwrap();}
+ #[test]fn extracts_a_zip_archive_named_bin(){
+  let id=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();let root=std::env::temp_dir().join(format!("extracted-zip-test-{id}"));fs::create_dir_all(&root).unwrap();
+  let archive_path=root.join("payload.bin");let file=File::create(&archive_path).unwrap();let mut writer=zip::ZipWriter::new(file);
+  writer.start_file("hello.txt",zip::write::SimpleFileOptions::default()).unwrap();writer.write_all(b"hello extracted").unwrap();writer.finish().unwrap();
+  let dest=root.join("out");fs::create_dir_all(&dest).unwrap();let result=extract_archive_inner(archive_path.to_string_lossy().into_owned(),dest.to_string_lossy().into_owned()).unwrap();
+  assert_eq!(result.files_written,1);assert_eq!(fs::read(dest.join("hello.txt")).unwrap(),b"hello extracted");let _=fs::remove_dir_all(root);
+ }
+}
