@@ -19,7 +19,7 @@ fn detect(path:&Path)->Result<Format,String>{
  let mut header=[0u8;32774]; let n=file.read(&mut header).map_err(|e|format!("Cannot read file: {e}"))?; let h=&header[..n];
  if h.starts_with(&[b'P',b'K',0x03,0x04])||h.starts_with(&[b'P',b'K',0x05,0x06])||h.starts_with(&[b'P',b'K',0x07,0x08]){return Ok(Format::Zip)}
  if h.starts_with(&[b'7',b'z',0xbc,0xaf,0x27,0x1c]){return Ok(Format::SevenZip)}
- if h.starts_with(b"RPF8"){return Ok(Format::Rpf8)}
+ if h.starts_with(b"8FPR")||h.starts_with(b"RPF8"){return Ok(Format::Rpf8)}
  if h.starts_with(&[b'R',b'a',b'r',b'!',0x1a,0x07,0x00])||h.starts_with(&[b'R',b'a',b'r',b'!',0x1a,0x07,0x01,0x00]){return Ok(Format::Rar)}
  if h.starts_with(&[0x1f,0x8b]){return Ok(Format::Gzip)}
  if h.starts_with(b"BZh"){return Ok(Format::Bzip2)}
@@ -139,7 +139,7 @@ mod tests{
  #[test]fn detects_seven_zip_as_supported(){let p=temp_file(&[b'7',b'z',0xbc,0xaf,0x27,0x1c,b'p']);assert_eq!(detect(&p).unwrap(),Format::SevenZip);assert!(Format::SevenZip.supported());fs::remove_file(p).unwrap();}
  #[test]fn rejects_parent_traversal(){assert!(safe_relative(Path::new("../outside.txt")).is_err());assert!(safe_relative(Path::new("folder/ok.txt")).is_ok());}
  #[test]fn unknown_binary_is_not_supported(){let p=temp_file(b"arbitrary game data");assert_eq!(detect(&p).unwrap(),Format::Unknown);fs::remove_file(p).unwrap();}
- #[test]fn detects_rdr2_rpf8_without_claiming_extraction_support(){let p=temp_file(b"RPF8 archive header");assert_eq!(detect(&p).unwrap(),Format::Rpf8);assert!(!Format::Rpf8.supported());fs::remove_file(p).unwrap();}
+ #[test]fn detects_rdr2_rpf8_little_endian_magic_without_claiming_extraction_support(){let p=temp_file(b"8FPR archive header");assert_eq!(detect(&p).unwrap(),Format::Rpf8);assert!(!Format::Rpf8.supported());fs::remove_file(p).unwrap();}
  #[test]fn extracts_a_zip_archive_named_bin(){
   let id=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();let root=std::env::temp_dir().join(format!("extracted-zip-test-{id}"));fs::create_dir_all(&root).unwrap();
   let archive_path=root.join("payload.bin");let file=File::create(&archive_path).unwrap();let mut writer=zip::ZipWriter::new(file);
