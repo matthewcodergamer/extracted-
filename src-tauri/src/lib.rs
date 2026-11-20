@@ -71,7 +71,7 @@ fn extract_archive_inner(path:String,destination:String)->Result<ExtractionResul
    let(mut files_written,mut bytes_written)=(0u64,0u64);
    for i in 0..archive.len(){
     let mut entry=archive.by_index(i).map_err(|e|format!("Cannot read ZIP entry: {e}"))?;
-    let Some(relative)=entry.enclosed_name().map(Path::to_path_buf) else{return Err(format!("Unsafe ZIP entry path rejected: {}",entry.name()))};
+    let Some(relative)=entry.enclosed_name() else{return Err(format!("Unsafe ZIP entry path rejected: {}",entry.name()))};
     let out=dest.join(relative);
     if entry.is_dir(){fs::create_dir_all(&out).map_err(|e|e.to_string())?;continue}
     if let Some(parent)=out.parent(){fs::create_dir_all(parent).map_err(|e|e.to_string())?}
@@ -124,7 +124,7 @@ fn extract_archive_inner(path:String,destination:String)->Result<ExtractionResul
 }
 #[tauri::command]
 async fn extract_archive(path:String,destination:String)->Result<ExtractionResult,String>{
- Ok(tauri::async_runtime::spawn_blocking(move || extract_archive_inner(path,destination)).await.map_err(|e|format!("Extraction task failed: {e}"))?)
+ tauri::async_runtime::spawn_blocking(move || extract_archive_inner(path,destination)).await.map_err(|e|format!("Extraction task failed: {e}"))?
 }
 pub fn run(){
  tauri::Builder::default().plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_opener::init())
