@@ -16,15 +16,15 @@ impl Format {
 }
 fn detect(path:&Path)->Result<Format,String>{
  let mut file=File::open(path).map_err(|e|format!("Cannot open file: {e}"))?;
- let mut header=[0u8;512]; let n=file.read(&mut header).map_err(|e|format!("Cannot read file: {e}"))?; let h=&header[..n];
- if h.starts_with(b"PK\\x03\\x04")||h.starts_with(b"PK\\x05\\x06")||h.starts_with(b"PK\\x07\\x08"){return Ok(Format::Zip)}
- if h.starts_with(b"7z\\xBC\\xAF\\x27\\x1C"){return Ok(Format::SevenZip)}
- if h.starts_with(b"Rar!\\x1A\\x07\\x00")||h.starts_with(b"Rar!\\x1A\\x07\\x01\\x00"){return Ok(Format::Rar)}
+ let mut header=[0u8;32774]; let n=file.read(&mut header).map_err(|e|format!("Cannot read file: {e}"))?; let h=&header[..n];
+ if h.starts_with(&[b'P',b'K',0x03,0x04])||h.starts_with(&[b'P',b'K',0x05,0x06])||h.starts_with(&[b'P',b'K',0x07,0x08]){return Ok(Format::Zip)}
+ if h.starts_with(&[b'7',b'z',0xbc,0xaf,0x27,0x1c]){return Ok(Format::SevenZip)}
+ if h.starts_with(&[b'R',b'a',b'r',b'!',0x1a,0x07,0x00])||h.starts_with(&[b'R',b'a',b'r',b'!',0x1a,0x07,0x01,0x00]){return Ok(Format::Rar)}
  if h.starts_with(&[0x1f,0x8b]){return Ok(Format::Gzip)}
  if h.starts_with(b"BZh"){return Ok(Format::Bzip2)}
  if h.starts_with(&[0xfd,b'7',b'z',b'X',b'Z',0x00]){return Ok(Format::Xz)}
- if n>=262&&&h[257..262]==b"ustar"{return Ok(Format::Tar)}
- if n>=32774&&&h[32769..32774]==b"CD001"{return Ok(Format::Iso)}
+ if n>=262 && &h[257..262]==b"ustar"{return Ok(Format::Tar)}
+ if n>=32774 && &h[32769..32774]==b"CD001"{return Ok(Format::Iso)}
  Ok(Format::Unknown)
 }
 #[tauri::command]
@@ -52,8 +52,7 @@ fn single_stream<R:Read>(reader:R,source:&Path,destination:&Path)->Result<Extrac
  let original=source.file_name().and_then(|n|n.to_str()).unwrap_or("archive.bin").to_ascii_lowercase();
  let output_name=[".gz",".gzip",".bz2",".xz",".bin"].iter().find_map(|ext|original.strip_suffix(ext)).filter(|s|!s.is_empty()).unwrap_or("extracted-data");
  let output_path=destination.join(output_name);
- if output_path.exists(){return Err(format!("Refusing to overwrite existing file: {}",output_path.display()))}
- let mut output=File::create(&output_path).map_err(|e|format!("Cannot create output file: {e}"))?;
+ let mut output=fs::OpenOptions::new().write(true).create_new(true).open(&output_path).map_err(|e|format!("Cannot create output file (it may already exist): {e}"))?;
  let bytes=copy_stream(reader,&mut output).map_err(|e|format!("Decompression failed: {e}"))?;
  output.sync_all().map_err(|e|format!("Could not flush output: {e}"))?;
  Ok(ExtractionResult{files_written:1,bytes_written:bytes,destination:destination.to_string_lossy().into_owned()})
@@ -75,8 +74,7 @@ fn extract_archive(path:String,destination:String)->Result<ExtractionResult,Stri
     let out=dest.join(relative);
     if entry.is_dir(){fs::create_dir_all(&out).map_err(|e|e.to_string())?;continue}
     if let Some(parent)=out.parent(){fs::create_dir_all(parent).map_err(|e|e.to_string())?}
-    if out.exists(){return Err(format!("Refusing to overwrite existing file: {}",out.display()))}
-    let mut target=File::create(&out).map_err(|e|e.to_string())?;
+    let mut target=fs::OpenOptions::new().write(true).create_new(true).open(&out).map_err(|e|format!("Cannot create output file (it may already exist): {e}"))?;
     bytes_written+=io::copy(&mut entry,&mut target).map_err(|e|format!("ZIP extraction failed: {e}"))?;
     target.sync_all().map_err(|e|e.to_string())?;files_written+=1;
    }
@@ -92,8 +90,7 @@ fn extract_archive(path:String,destination:String)->Result<ExtractionResult,Stri
     if entry.header().entry_type().is_dir(){fs::create_dir_all(&out).map_err(|e|e.to_string())?;continue}
     if !entry.header().entry_type().is_file(){continue}
     if let Some(parent)=out.parent(){fs::create_dir_all(parent).map_err(|e|e.to_string())?}
-    if out.exists(){return Err(format!("Refusing to overwrite existing file: {}",out.display()))}
-    let mut target=File::create(&out).map_err(|e|e.to_string())?;
+    let mut target=fs::OpenOptions::new().write(true).create_new(true).open(&out).map_err(|e|format!("Cannot create output file (it may already exist): {e}"))?;
     bytes_written+=io::copy(&mut entry,&mut target).map_err(|e|format!("TAR extraction failed: {e}"))?;
     target.sync_all().map_err(|e|e.to_string())?;files_written+=1;
    }
@@ -114,8 +111,8 @@ pub fn run(){
 mod tests{
  use super::*;use std::{fs,time::{SystemTime,UNIX_EPOCH}};
  fn temp_file(bytes:&[u8])->PathBuf{let id=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();let p=std::env::temp_dir().join(format!("extracted-test-{id}.bin"));fs::write(&p,bytes).unwrap();p}
- #[test]fn detects_zip_signature_with_bin_extension(){let p=temp_file(b"PK\\x03\\x04payload");assert_eq!(detect(&p).unwrap(),Format::Zip);fs::remove_file(p).unwrap();}
- #[test]fn detects_seven_zip_without_claiming_support(){let p=temp_file(b"7z\\xBC\\xAF\\x27\\x1Cpayload");assert_eq!(detect(&p).unwrap(),Format::SevenZip);assert!(!Format::SevenZip.supported());fs::remove_file(p).unwrap();}
+ #[test]fn detects_zip_signature_with_bin_extension(){let p=temp_file(&[b'P',b'K',0x03,0x04,b'p']);assert_eq!(detect(&p).unwrap(),Format::Zip);fs::remove_file(p).unwrap();}
+ #[test]fn detects_seven_zip_without_claiming_support(){let p=temp_file(&[b'7',b'z',0xbc,0xaf,0x27,0x1c,b'p']);assert_eq!(detect(&p).unwrap(),Format::SevenZip);assert!(!Format::SevenZip.supported());fs::remove_file(p).unwrap();}
  #[test]fn rejects_parent_traversal(){assert!(safe_relative(Path::new("../outside.txt")).is_err());assert!(safe_relative(Path::new("folder/ok.txt")).is_ok());}
  #[test]fn unknown_binary_is_not_supported(){let p=temp_file(b"arbitrary game data");assert_eq!(detect(&p).unwrap(),Format::Unknown);fs::remove_file(p).unwrap();}
 }
