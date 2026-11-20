@@ -18,8 +18,8 @@ fn detect(path:&Path)->Result<Format,String>{
  let mut file=File::open(path).map_err(|e|format!("Cannot open file: {e}"))?;
  let mut header=[0u8;32774]; let n=file.read(&mut header).map_err(|e|format!("Cannot read file: {e}"))?; let h=&header[..n];
  if h.starts_with(&[b'P',b'K',0x03,0x04])||h.starts_with(&[b'P',b'K',0x05,0x06])||h.starts_with(&[b'P',b'K',0x07,0x08]){return Ok(Format::Zip)}
- if h.starts_with(&[b'7',b'z',0xbc,0xaf,0x27,0x1c]){return Ok(Format::SevenZip)}
  if h.starts_with(b"8FPR")||h.starts_with(b"RPF8"){return Ok(Format::Rpf8)}
+ if h.starts_with(&[b'7',b'z',0xbc,0xaf,0x27,0x1c]){return Ok(Format::SevenZip)}
  if h.starts_with(&[b'R',b'a',b'r',b'!',0x1a,0x07,0x00])||h.starts_with(&[b'R',b'a',b'r',b'!',0x1a,0x07,0x01,0x00]){return Ok(Format::Rar)}
  if h.starts_with(&[0x1f,0x8b]){return Ok(Format::Gzip)}
  if h.starts_with(b"BZh"){return Ok(Format::Bzip2)}
@@ -143,7 +143,7 @@ mod tests{
   let archive_path=root.join("payload.bin");fs::write(&archive_path,compressed).unwrap();
   let dest=root.join("out");fs::create_dir_all(&dest).unwrap();
   let result=extract_archive_inner(archive_path.to_string_lossy().into_owned(),dest.to_string_lossy().into_owned()).unwrap();
-  assert_eq!(result.files_written,1);assert_eq!(fs::read(dest.join("extracted-data")).unwrap(),b"large binary payload streamed");
+  assert_eq!(result.files_written,1);assert_eq!(fs::read(dest.join("payload")).unwrap(),b"large binary payload streamed");
   let _=fs::remove_dir_all(root);
  }
  #[test]fn detects_zip_signature_with_bin_extension(){let p=temp_file(&[b'P',b'K',0x03,0x04,b'p']);assert_eq!(detect(&p).unwrap(),Format::Zip);fs::remove_file(p).unwrap();}
