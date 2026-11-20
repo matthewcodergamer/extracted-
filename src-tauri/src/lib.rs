@@ -105,7 +105,7 @@ fn extract_archive_inner(path:String,destination:String)->Result<ExtractionResul
    reader.for_each_entries(|entry,stream|{
     if entry.is_anti_item(){return Ok(true)}
     let normalized=entry.name().replace('\\',"/");
-    let relative=safe_relative(Path::new(&normalized)).map_err(sevenz_rust2::Error::other)?;
+    let relative=safe_relative(Path::new(&normalized)).map_err(|message|sevenz_rust2::Error::Other(std::borrow::Cow::Owned(message)))?;
     let out=dest.join(relative);
     if entry.is_directory(){fs::create_dir_all(&out)?;return Ok(true)}
     if !entry.has_stream(){return Ok(true)}
