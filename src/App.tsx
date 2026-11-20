@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type DragEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -15,7 +15,7 @@ export default function App(){
  const chooseFile=async()=>{const selected=await open({multiple:false,directory:false,title:"Choose an archive"});if(typeof selected==="string")await inspect(selected);};
  const chooseDestination=async()=>{const selected=await open({multiple:false,directory:true,title:"Choose extraction folder"});if(typeof selected==="string")setDestination(selected);};
  const extract=async()=>{if(!file||!destination||!file.supported)return;setStatus("extracting");setError("");setResult(null);setMessage("Extracting safely…");try{const done=await invoke<ExtractionResult>("extract_archive",{path:file.path,destination});setResult(done);setStatus("done");setMessage("Finished — "+done.files_written+" file(s) extracted.");}catch(e){setStatus("error");setError(String(e));setMessage("Extraction failed.");}};
- const onDrop=async(event:React.DragEvent)=>{event.preventDefault();const f=event.dataTransfer.files[0] as (File&{path?:string})|undefined;if(f?.path)await inspect(f.path);else setMessage("Use Browse Files to select a file from disk.");};
+ const onDrop=async(event:DragEvent)=>{event.preventDefault();const f=event.dataTransfer.files[0] as (File&{path?:string})|undefined;if(f?.path)await inspect(f.path);else setMessage("Use Browse Files to select a file from disk.");};
  return <main className="app-shell">
  <header className="topbar"><div className="brand"><div className="brand-icon"><img src="/icon.svg"/></div><div><strong>Extracted</strong><span>Archive utility</span></div></div><div className="top-pill"><span className="live-dot"/> Native desktop</div></header>
  <section className="hero"><div className="eyebrow"><span/> SIMPLE. SAFE. NATIVE.</div><h1>Unpack what<br/><em>matters.</em></h1><p>Inspect and extract archives on your Mac. Files named <b>.bin</b> are checked by their contents—not just their extension.</p></section>
