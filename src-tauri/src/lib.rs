@@ -135,6 +135,17 @@ pub fn run(){
 mod tests{
  use super::*;use std::{fs,time::{SystemTime,UNIX_EPOCH}};
  fn temp_file(bytes:&[u8])->PathBuf{let id=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();let p=std::env::temp_dir().join(format!("extracted-test-{id}.bin"));fs::write(&p,bytes).unwrap();p}
+ #[test]fn extracts_gzip_payload_from_bin_file(){
+  use flate2::{write::GzEncoder,Compression};
+  let id=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+  let root=std::env::temp_dir().join(format!("extracted-gzip-bin-test-{id}"));fs::create_dir_all(&root).unwrap();
+  let mut encoder=GzEncoder::new(Vec::new(),Compression::default());encoder.write_all(b"large binary payload streamed").unwrap();let compressed=encoder.finish().unwrap();
+  let archive_path=root.join("payload.bin");fs::write(&archive_path,compressed).unwrap();
+  let dest=root.join("out");fs::create_dir_all(&dest).unwrap();
+  let result=extract_archive_inner(archive_path.to_string_lossy().into_owned(),dest.to_string_lossy().into_owned()).unwrap();
+  assert_eq!(result.files_written,1);assert_eq!(fs::read(dest.join("extracted-data")).unwrap(),b"large binary payload streamed");
+  let _=fs::remove_dir_all(root);
+ }
  #[test]fn detects_zip_signature_with_bin_extension(){let p=temp_file(&[b'P',b'K',0x03,0x04,b'p']);assert_eq!(detect(&p).unwrap(),Format::Zip);fs::remove_file(p).unwrap();}
  #[test]fn detects_seven_zip_as_supported(){let p=temp_file(&[b'7',b'z',0xbc,0xaf,0x27,0x1c,b'p']);assert_eq!(detect(&p).unwrap(),Format::SevenZip);assert!(Format::SevenZip.supported());fs::remove_file(p).unwrap();}
  #[test]fn rejects_parent_traversal(){assert!(safe_relative(Path::new("../outside.txt")).is_err());assert!(safe_relative(Path::new("folder/ok.txt")).is_ok());}
