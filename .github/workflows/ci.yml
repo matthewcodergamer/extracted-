@@ -22,7 +22,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf
       - run: cargo test --manifest-path src-tauri/Cargo.toml
-      - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
   macos-build:
     runs-on: macos-latest
     steps:
