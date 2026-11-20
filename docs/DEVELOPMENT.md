@@ -38,9 +38,10 @@ The .bin extension does not identify a payload format. The app uses file signatu
 - ZIP paths are checked using the archive library's enclosed-path validation.
 - TAR extraction only writes regular files and directories; links and special entries are skipped.
 - Existing files are not overwritten.
-- Extraction streams data rather than loading entire archives into memory.
+- ZIP, TAR, and compressor extraction stream data rather than loading whole archives into memory.
+- 7-Zip uses a decoder memory limit of 256 MiB for header and dictionary/model allocations separately; this is not a hard cap on total process memory or extracted output.
 - This first version does not yet show byte-level progress or support mid-extraction cancellation.
 - Disk-space preflight and a full extraction rollback are not yet implemented.
 
 ## Red Dead Redemption 2
-RPF8 signatures are recognized for inspection, but RPF extraction is not implemented. RPF is a distinct archive format and is not equivalent to .bin. A current Rust library advertises read support for RPF8, but the integration and its key/encryption requirements still need validation against lawful sample fixtures. No DRM, encryption, or access-control bypass is included.
+RPF8 signatures are recognized for inspection, but RPF extraction is not implemented. RPF is a distinct archive format and is not equivalent to .bin. The public rpf-archive Rust library advertises RPF8 read support, but its parse/extract API accepts the full archive as a byte slice, which is not suitable for our large-file goal without a file-backed streaming adapter. Its current parser marks encrypted RPF8 TOCs as TFIT-encrypted and reports that RDR2 keys are not supported. Extracted therefore only identifies RPF8 and does not try to decrypt or bypass it. No DRM, encryption, or access-control bypass is included.
